@@ -13,6 +13,7 @@ on:
           - kanagawa
           - tama
           - force_all
+          - 144h  # 追加
 
 jobs:
   run-scraper:
@@ -38,6 +39,5 @@ jobs:
       - name: Run Patrol Script
         env:
           TARGET_AREA: ${{ github.event.inputs.target_area }}
-          # ★ここを追記: ログのリアルタイム表示を有効にする設定
           PYTHONUNBUFFERED: "1"
         run: python main.py
