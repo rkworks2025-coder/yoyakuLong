@@ -1,0 +1,6 @@
+pandas
+gspread
+selenium
+beautifulsoup4
+lxml
+webdriver-manager
