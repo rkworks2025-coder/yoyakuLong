@@ -1,6 +1,6 @@
 # ==========================================================
 # 【yoyakuLong】144時間(6日間) 精密 Sniper エンジン（最終修正版）
-# 改修内容: 日付入力時の .clear() 削除による invalid element state 回避
+# 改修内容: 後半(TMA2)日付のSelectクラスによる正確なプルダウン選択対応
 # ==========================================================
 import sys
 import os
@@ -19,6 +19,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 from bs4 import BeautifulSoup
 
 # --- Discord通知用設定 ---
@@ -59,7 +60,7 @@ except Exception as e:
     send_discord_notification(f"❌ Google認証失敗: {e}")
     raise
 
-print(f"\n[モード] 144時間(6日間) Sniper（日付入力修正版）")
+print(f"\n[モード] 144時間(6日間) Sniper（日付プルダウン正確選択モード）")
 
 # I. 車両リスト(CSV)読み込み
 df_map = pd.read_csv(CSV_FILE_NAME)
@@ -199,14 +200,17 @@ try:
         wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
         
         target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
-        date_input = driver.find_element(By.ID, "reserveStartDate")
+        date_select_element = driver.find_element(By.ID, "reserveStartDate")
         
-        # ★修正: .clear() を削除し、直接 send_keys で上書き送信する（元々の正常な挙動）
-        date_input.send_keys(target_date_val)
-        date_input.send_keys(Keys.RETURN)
+        # ★修正: プルダウン(select)要素として正確に選択する
+        try:
+            Select(date_select_element).select_by_value(target_date_val)
+        except Exception as e:
+            raise Exception(f"【自爆】後半日付プルダウンの選択に失敗しました (指定値: {target_date_val}): {e}")
         
-        # 描画待ち
+        # 描画待ち (ローディング再出現に備える)
         sleep(2)
+        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".timetable-contents table")))
 
         soup_detail = BeautifulSoup(driver.page_source, "lxml")
