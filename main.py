@@ -1,6 +1,6 @@
 # ==========================================================
-# 【yoyakuLong】144時間(6日間) 精密狙い撃ちエンジン
-# 改修内容: 車両ベース・ループへの転換、自爆トリガー強化、144h整合性強制チェック
+# 【yoyakuLong】144時間(6日間) 精密狙い撃ちエンジン（待機ロジック強化版）
+# 改修内容: JS描画待ちの実装、車両ベースループ、144h整合性強制チェック
 # ==========================================================
 import sys
 import os
@@ -59,18 +59,15 @@ except Exception as e:
     send_discord_notification(f"❌ Google認証失敗: {e}")
     raise
 
-print(f"\n[モード] 144時間(6日間) 車両ベース・狙い撃ち実行")
+print(f"\n[モード] 144時間(6日間) Sniper（JS描画待機モード）")
 
 # I. 車両リスト(CSV)読み込み
-if not os.path.exists(CSV_FILE_NAME):
-    raise FileNotFoundError(f"必須ファイル {CSV_FILE_NAME} が見つかりません。")
-
 df_map = pd.read_csv(CSV_FILE_NAME)
 df_map.columns = df_map.columns.str.strip()
 if 'area' in df_map.columns: df_map = df_map.rename(columns={'area': 'city'})
 if 'station_name' in df_map.columns: df_map = df_map.rename(columns={'station_name': 'station'})
 
-# II. inspectionlogから「今取るべき車両」だけを特定
+# II. inspectionlogから「今取るべき車両(93台想定)」を特定
 print(f"\n[ターゲット特定] inspectionlogを解析中...")
 try:
     inspection_sh_key = INSPECTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
@@ -81,17 +78,14 @@ except Exception as e:
     send_discord_notification(f"❌ Inspectionシート読み取り失敗: {e}")
     raise
 
-# standby または stopped の車両だけをリストアップ
 target_vehicles = []
 if len(inspection_values) > 1:
     for row in inspection_values[1:]:
         if len(row) > 5:
-            st_name = str(row[1]).strip()       # B列: station_name
-            plate = str(row[3]).strip().replace(" ", "") # D列: plate
-            status = str(row[5]).strip().lower()         # F列: status
-            
+            st_name = str(row[1]).strip()
+            plate = str(row[3]).strip().replace(" ", "")
+            status = str(row[5]).strip().lower()
             if status in ['standby', 'stopped']:
-                # CSVからステーションコードを特定
                 match = df_map[df_map['station'] == st_name]
                 if not match.empty:
                     target_vehicles.append({
@@ -102,10 +96,10 @@ if len(inspection_values) > 1:
                     })
 
 if not target_vehicles:
-    print("\n[通知] 巡回対象の車両(standby/stopped)がいませんでした。終了します。")
+    print("\n[通知] 巡回対象の車両がいませんでした。終了します。")
     sys.exit(0)
 
-print(f"-> ターゲット確定: {len(target_vehicles)} 台 (地点ベースの118箇所から絞り込み成功)")
+print(f"-> ターゲット確定: {len(target_vehicles)} 台")
 
 # ドライバ設定
 options = Options()
@@ -114,7 +108,7 @@ options.add_argument('--no-sandbox')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument('--window-size=1920,1080')
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 15)
+wait = WebDriverWait(driver, 20) # 待機時間を20秒に延長（電波不良対策）
 collected_data = []
 
 try:
@@ -130,21 +124,29 @@ try:
     if "login" in driver.current_url.lower():
         raise Exception("ログイン失敗。認証情報を確認してください。")
 
-    # 車両ベースのループ開始
     for i, target in enumerate(target_vehicles):
         plate = target['plate']
         station_name = target['station']
         station_cd = target['stationCd']
         area = target['city']
 
-        print(f"[{i+1}/{len(target_vehicles)}] {plate} ({station_name}) 狙い撃ち中...")
+        print(f"[{i+1}/{len(target_vehicles)}] {plate} ({station_name}) を解析中...")
         
-        # 直接ステーション詳細へ
         base_url = f"https://dailycheck.tc-extsys.jp/tcrappsweb/web/routineStationVehicle.html?stationCd={station_cd}"
         driver.get(base_url)
+        
+        # 1. まず車両BOXが表示されるのを待つ
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
 
-        # ターゲット車両のBOXを特定
+        # 2. ★【最重要】特定の車両の「タイムライン表」がJSで描画されるのを精密に待つ
+        # XPATH: プレート名を含むBOX内の 'table.timetable' が出現するまで待機
+        xpath_timetable = f"//div[contains(text(), '{plate}')]/ancestor::div[@class='car-list-box']//table[@class='timetable']"
+        try:
+            wait.until(EC.presence_of_element_located((By.XPATH, xpath_timetable)))
+        except:
+            raise Exception(f"【自爆】車両 {plate} のタイムライン描画がタイムアウトしました。電波不良かJSエラーの可能性があります。")
+
+        # 描画完了後のソースを解析
         soup = BeautifulSoup(driver.page_source, "lxml")
         target_box = None
         for box in soup.find_all("div", class_="car-list-box"):
@@ -154,19 +156,12 @@ try:
                 model = raw_text.split(" / ")[1].strip() if " / " in raw_text else ""
                 break
         
-        if not target_box:
-            raise Exception(f"【自爆】車両 {plate} がステーション {station_name} 内で見つかりません。")
-
-        # 基準時刻
         now_jst = datetime.now(timezone(timedelta(hours=+9), 'JST'))
         start_time_str = f"{now_jst.strftime('%Y-%m-%d')} {now_jst.hour:02d}:00"
 
         # --- 【前半: 72h】 ---
         first_72h = []
         timetable = target_box.find("table", class_="timetable")
-        if not timetable:
-            raise Exception(f"【自爆】{plate} の前半タイムライン要素が見つかりません。")
-            
         data_cells = []
         for r in timetable.find_all("tr"):
             cells = r.find_all("td")
@@ -174,45 +169,34 @@ try:
                 data_cells = cells
                 break
         
-        if not data_cells:
-            raise Exception(f"【自爆】{plate} の前半予約データが取得できません。")
-
         for cell in data_cells:
             cls = cell.get("class", [])
             symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
             colspan = int(cell.get("colspan", 1))
             first_72h.extend([symbol] * colspan)
         
-        # 厳格チェック（288個でなければ自爆）
         if len(first_72h) != 288:
-            raise ValueError(f"【整合性エラー】{plate} 前半データ不整合: {len(first_72h)}/288")
+            raise ValueError(f"【整合性エラー】{plate} 前半データ不備: {len(first_72h)}/288")
 
         # --- 【後半: 72h】 (TMA2) ---
-        second_72h = []
-        link_btn = target_box.find("span", class_="link-btn")
-        if not link_btn or not link_btn.find("a"):
-            raise Exception(f"【自爆】{plate} の詳細リンクが見つかりません。")
-            
-        reserve_link = link_btn.find("a")['href']
+        reserve_link = target_box.find("span", class_="link-btn").find("a")['href']
         driver.get(f"https://dailycheck.tc-extsys.jp{reserve_link}")
         wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
         
-        # 日付選択 (+3日)
         target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
         date_input = driver.find_element(By.ID, "reserveStartDate")
         date_input.clear()
         date_input.send_keys(target_date_val)
         date_input.send_keys(Keys.RETURN)
         
-        sleep(4)
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "timetable-contents")))
+        # 後半画面もJS描画を確実に待つ
+        sleep(2) # 通信のきっかけ
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".timetable-contents table")))
 
         soup_detail = BeautifulSoup(driver.page_source, "lxml")
-        detail_div = soup_detail.find("div", class_="timetable-contents")
-        if not detail_div:
-            raise Exception(f"【自爆】{plate} 後半画面の描画に失敗しました。")
-            
-        detail_cells = detail_div.find_all("td")
+        detail_cells = soup_detail.find("div", class_="timetable-contents").find("table").find_all("td")
+        
+        second_72h = []
         for cell in detail_cells:
             cls = cell.get("class", [])
             if any(x in cls for x in ["vacant", "full", "impossible", "others"]):
@@ -220,17 +204,15 @@ try:
                 colspan = int(cell.get("colspan", 1))
                 second_72h.extend([symbol] * colspan)
 
-        # 厳格チェック（後半も288個でなければ自爆）
         if len(second_72h) != 288:
-            raise ValueError(f"【整合性エラー】{plate} 後半データ不整合: {len(second_72h)}/288")
+            raise ValueError(f"【整合性エラー】{plate} 後半データ不備: {len(second_72h)}/288")
 
-        # 最終結合
         full_rsv = "".join(first_72h) + "".join(second_72h)
         if len(full_rsv) != 576:
-            raise ValueError(f"【整合性エラー】{plate} 最終結合不整合: {len(full_rsv)}/576")
+            raise ValueError(f"【整合性エラー】{plate} 最終データ不備: {len(full_rsv)}/576")
 
         collected_data.append([area, station_name, plate, model, start_time_str, full_rsv])
-        print(f"    -> {plate} 確保完了 (正確に576スロット)")
+        print(f"    -> {plate} 144h取得成功")
 
     # シート保存
     if collected_data:
@@ -241,21 +223,16 @@ try:
             ws_name = f"{str(area_name).replace('市','').strip()}_更新用"
             try: ws = sh_prod.worksheet(ws_name)
             except: ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
-            
             ws.clear()
-            data_to_update = [df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist()
-            ws.update(data_to_update)
+            ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist())
         
-        send_discord_notification(f"✅ yoyakuLong: {len(collected_data)}台の狙い撃ち更新が完了しました。")
-        print("\n[完了] すべての処理が正常終了しました。")
-    else:
-        print("\n[通知] 更新データはありませんでした。")
+        send_discord_notification(f"✅ yoyakuLong: {len(collected_data)}台の Sniper 更新完了。")
 
 except Exception as e:
-    error_msg = f"❌ yoyakuLong重大エラー（即時停止）: {e}"
+    error_msg = f"❌ yoyakuLong重大エラー（停止）: {e}"
     print(f"\n{error_msg}")
     send_discord_notification(error_msg)
-    sys.exit(1) # 異常終了を明示
+    sys.exit(1)
 
 finally:
     driver.quit()
