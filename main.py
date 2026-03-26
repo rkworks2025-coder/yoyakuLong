@@ -1,6 +1,6 @@
 # ==========================================================
-# 【yoyakuLong】144時間(6日間) 精密 Sniper エンジン（完全同期版）
-# 改修内容: ローディング画面(loading-view)の消失待機、プレートスペース対応、自爆強化
+# 【yoyakuLong】144時間(6日間) 精密 Sniper エンジン（最終修正版）
+# 改修内容: 日付入力時の .clear() 削除による invalid element state 回避
 # ==========================================================
 import sys
 import os
@@ -59,7 +59,7 @@ except Exception as e:
     send_discord_notification(f"❌ Google認証失敗: {e}")
     raise
 
-print(f"\n[モード] 144時間(6日間) Sniper（完全同期・遮断回避モード）")
+print(f"\n[モード] 144時間(6日間) Sniper（日付入力修正版）")
 
 # I. 車両リスト(CSV)読み込み
 df_map = pd.read_csv(CSV_FILE_NAME)
@@ -67,7 +67,7 @@ df_map.columns = df_map.columns.str.strip()
 if 'area' in df_map.columns: df_map = df_map.rename(columns={'area': 'city'})
 if 'station_name' in df_map.columns: df_map = df_map.rename(columns={'station_name': 'station'})
 
-# II. inspectionlogから「今取るべき車両(93台想定)」を特定
+# II. inspectionlogからターゲットを特定
 print(f"\n[ターゲット特定] inspectionlogを解析中...")
 try:
     inspection_sh_key = INSPECTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
@@ -108,7 +108,7 @@ options.add_argument('--no-sandbox')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument('--window-size=1920,1080')
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 25) # 待機時間を25秒に強化
+wait = WebDriverWait(driver, 25)
 collected_data = []
 
 try:
@@ -135,12 +135,11 @@ try:
         base_url = f"https://dailycheck.tc-extsys.jp/tcrappsweb/web/routineStationVehicle.html?stationCd={station_cd}"
         driver.get(base_url)
 
-        # --- ★【最重要】ローディング画面が消えるまで待機 ---
-        # 画面を覆っている Loading... が消えない限り、下の要素は触れない
+        # ローディング画面の待機
         try:
             wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
         except:
-            raise Exception(f"【自爆】ローディング画面(loading-view)が消えません。通信環境を確認してください。")
+            raise Exception(f"【自爆】ローディング画面が消えません。通信環境を確認してください。")
 
         # 車両BOXの特定
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
@@ -156,13 +155,13 @@ try:
         if not target_element:
             raise Exception(f"【自爆】車両 {target_plate} をページ内で特定できませんでした。")
 
-        # 予約表(table.timetable)が描画されるのを精密に待つ
+        # 予約表の描画待機
         try:
             wait.until(lambda d: target_element.find_elements(By.CLASS_NAME, "timetable"))
         except:
             raise Exception(f"【自爆】車両 {target_plate} の予約表が描画されませんでした。")
 
-        # 描画完了後のソースを解析
+        # 前半データ解析
         soup = BeautifulSoup(driver.page_source, "lxml")
         target_box = None
         for box in soup.find_all("div", class_="car-list-box"):
@@ -174,7 +173,6 @@ try:
         now_jst = datetime.now(timezone(timedelta(hours=+9), 'JST'))
         start_time_str = f"{now_jst.strftime('%Y-%m-%d')} {now_jst.hour:02d}:00"
 
-        # --- 【前半: 72h】 ---
         first_72h = []
         timetable = target_box.find("table", class_="timetable")
         data_cells = []
@@ -197,13 +195,13 @@ try:
         reserve_link = target_box.find("span", class_="link-btn").find("a")['href']
         driver.get(f"https://dailycheck.tc-extsys.jp{reserve_link}")
         
-        # 後半画面でもローディングを待つ
         wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
         wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
         
         target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
         date_input = driver.find_element(By.ID, "reserveStartDate")
-        date_input.clear()
+        
+        # ★修正: .clear() を削除し、直接 send_keys で上書き送信する（元々の正常な挙動）
         date_input.send_keys(target_date_val)
         date_input.send_keys(Keys.RETURN)
         
