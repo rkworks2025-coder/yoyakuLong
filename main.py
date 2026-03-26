@@ -1,6 +1,6 @@
 # ==========================================================
-# 【yoyakuLong】144時間(6日間) 精密狙い撃ちエンジン（最終安定版）
-# 改修内容: プレート表記ゆれ(スペース)対応、JS描画精密待機、自爆トリガー強化
+# 【yoyakuLong】144時間(6日間) 精密 Sniper エンジン（完全同期版）
+# 改修内容: ローディング画面(loading-view)の消失待機、プレートスペース対応、自爆強化
 # ==========================================================
 import sys
 import os
@@ -59,7 +59,7 @@ except Exception as e:
     send_discord_notification(f"❌ Google認証失敗: {e}")
     raise
 
-print(f"\n[モード] 144時間(6日間) Sniper（プレート正規化・待機強化モード）")
+print(f"\n[モード] 144時間(6日間) Sniper（完全同期・遮断回避モード）")
 
 # I. 車両リスト(CSV)読み込み
 df_map = pd.read_csv(CSV_FILE_NAME)
@@ -67,7 +67,7 @@ df_map.columns = df_map.columns.str.strip()
 if 'area' in df_map.columns: df_map = df_map.rename(columns={'area': 'city'})
 if 'station_name' in df_map.columns: df_map = df_map.rename(columns={'station_name': 'station'})
 
-# II. inspectionlogから「今取るべき車両」だけを特定
+# II. inspectionlogから「今取るべき車両(93台想定)」を特定
 print(f"\n[ターゲット特定] inspectionlogを解析中...")
 try:
     inspection_sh_key = INSPECTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
@@ -83,7 +83,7 @@ if len(inspection_values) > 1:
     for row in inspection_values[1:]:
         if len(row) > 5:
             st_name = str(row[1]).strip()
-            plate = str(row[3]).strip().replace(" ", "") # スペースなしで保持
+            plate = str(row[3]).strip().replace(" ", "")
             status = str(row[5]).strip().lower()
             if status in ['standby', 'stopped']:
                 match = df_map[df_map['station'] == st_name]
@@ -108,7 +108,7 @@ options.add_argument('--no-sandbox')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument('--window-size=1920,1080')
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 20)
+wait = WebDriverWait(driver, 25) # 待機時間を25秒に強化
 collected_data = []
 
 try:
@@ -125,7 +125,7 @@ try:
         raise Exception("ログイン失敗。認証情報を確認してください。")
 
     for i, target in enumerate(target_vehicles):
-        target_plate = target['plate'] # スペースなし
+        target_plate = target['plate']
         station_name = target['station']
         station_cd = target['stationCd']
         area = target['city']
@@ -134,15 +134,21 @@ try:
         
         base_url = f"https://dailycheck.tc-extsys.jp/tcrappsweb/web/routineStationVehicle.html?stationCd={station_cd}"
         driver.get(base_url)
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
 
-        # --- ★【最重要】車両BOXの特定（スペースを無視してマッチング） ---
+        # --- ★【最重要】ローディング画面が消えるまで待機 ---
+        # 画面を覆っている Loading... が消えない限り、下の要素は触れない
+        try:
+            wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
+        except:
+            raise Exception(f"【自爆】ローディング画面(loading-view)が消えません。通信環境を確認してください。")
+
+        # 車両BOXの特定
+        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
         car_boxes = driver.find_elements(By.CLASS_NAME, "car-list-box")
         target_element = None
         for box in car_boxes:
             title_area = box.find_element(By.CLASS_NAME, "car-list-title-area").text
-            normalized_title = title_area.replace(" ", "") # サイト側の文字からもスペースを抜く
-            if target_plate in normalized_title:
+            if target_plate in title_area.replace(" ", ""):
                 target_element = box
                 model = title_area.split(" / ")[1].strip() if " / " in title_area else ""
                 break
@@ -150,12 +156,11 @@ try:
         if not target_element:
             raise Exception(f"【自爆】車両 {target_plate} をページ内で特定できませんでした。")
 
-        # --- ★【精密待機】予約表(table.timetable)がJSで描画されるのを待つ ---
+        # 予約表(table.timetable)が描画されるのを精密に待つ
         try:
-            # 見つけた車両BOXの中に、table要素が出現するまで待機
             wait.until(lambda d: target_element.find_elements(By.CLASS_NAME, "timetable"))
         except:
-            raise Exception(f"【自爆】車両 {target_plate} の予約表がタイムアウト内に描画されませんでした。")
+            raise Exception(f"【自爆】車両 {target_plate} の予約表が描画されませんでした。")
 
         # 描画完了後のソースを解析
         soup = BeautifulSoup(driver.page_source, "lxml")
@@ -191,6 +196,9 @@ try:
         # --- 【後半: 72h】 (TMA2) ---
         reserve_link = target_box.find("span", class_="link-btn").find("a")['href']
         driver.get(f"https://dailycheck.tc-extsys.jp{reserve_link}")
+        
+        # 後半画面でもローディングを待つ
+        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
         wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
         
         target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
@@ -199,15 +207,12 @@ try:
         date_input.send_keys(target_date_val)
         date_input.send_keys(Keys.RETURN)
         
-        # 後半画面の描画待ち
+        # 描画待ち
         sleep(2)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".timetable-contents table")))
 
         soup_detail = BeautifulSoup(driver.page_source, "lxml")
         timetable_detail = soup_detail.find("div", class_="timetable-contents").find("table")
-        if not timetable_detail:
-            raise Exception(f"【自爆】{target_plate} 後半画面の予約表が読み込めません。")
-
         detail_cells = timetable_detail.find_all("td")
         second_72h = []
         for cell in detail_cells:
@@ -239,7 +244,7 @@ try:
             ws.clear()
             ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist())
         
-        send_discord_notification(f"✅ yoyakuLong Sniper: {len(collected_data)}台の更新が正常に完了しました。")
+        send_discord_notification(f"✅ yoyakuLong Sniper: {len(collected_data)}台の更新が完了。")
 
 except Exception as e:
     error_msg = f"❌ yoyakuLong重大エラー（停止）: {e}"
