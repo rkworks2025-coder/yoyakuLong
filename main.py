@@ -63,7 +63,7 @@ except Exception as e:
 print(f"\n[モード] 144時間(6日間) Sniper（日付プルダウン正確選択モード）")
 
 # I. 車両リスト(CSV)読み込み
-df_map = pd.read_csv(CSV_FILE_NAME)
+df_map = pd.read_csv(CSV_FILE_NAME, encoding='utf-8')
 df_map.columns = df_map.columns.str.strip()
 if 'area' in df_map.columns: df_map = df_map.rename(columns={'area': 'city'})
 if 'station_name' in df_map.columns: df_map = df_map.rename(columns={'station_name': 'station'})
