@@ -63,7 +63,7 @@ except Exception as e:
 print(f"\n[モード] 144時間(6日間) Sniper（日付プルダウン正確選択モード）")
 
 # I. 車両リスト(CSV)読み込み
-df_map = pd.read_csv(CSV_FILE_NAME, encoding='utf-8')
+df_map = pd.read_csv(CSV_FILE_NAME, encoding='shift_jis')
 df_map.columns = df_map.columns.str.strip()
 if 'area' in df_map.columns: df_map = df_map.rename(columns={'area': 'city'})
 if 'station_name' in df_map.columns: df_map = df_map.rename(columns={'station_name': 'station'})
@@ -150,7 +150,7 @@ try:
             title_area = box.find_element(By.CLASS_NAME, "car-list-title-area").text
             if target_plate in title_area.replace(" ", ""):
                 target_element = box
-                model = title_area.split(" / ")[1].strip() if " / " in title_area else ""
+                model = title_area.split(" / ")[-1].strip() if " / " in title_area else ""
                 break
         
         if not target_element:
@@ -176,18 +176,13 @@ try:
 
         first_72h = []
         timetable = target_box.find("table", class_="timetable")
-        data_cells = []
-        for r in timetable.find_all("tr"):
-            cells = r.find_all("td")
-            if cells and any(x in c.get("class", []) for c in cells for x in ["vacant", "full", "impossible", "others"]):
-                data_cells = cells
-                break
-        
-        for cell in data_cells:
+        # 後半と同様にフラット取得し、対象クラスのtdだけ処理する（breakなし）
+        for cell in timetable.find_all("td"):
             cls = cell.get("class", [])
-            symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
-            colspan = int(cell.get("colspan", 1))
-            first_72h.extend([symbol] * colspan)
+            if any(x in cls for x in ["vacant", "full", "impossible", "others"]):
+                symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
+                colspan = int(cell.get("colspan", 1))
+                first_72h.extend([symbol] * colspan)
         
         if len(first_72h) != 288:
             raise ValueError(f"【不整合】{target_plate} 前半データ不足: {len(first_72h)}/288")
