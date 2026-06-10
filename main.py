@@ -42,7 +42,7 @@ USER_ID_2 = "REDACTED"
 PASSWORD = "REDACTED"
 
 # 2. シート設定
-PRODUCTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/13cQngK_Xx38VU67yLS-iTHyOZgsACZdxM34l-Jq_U9A/edit"
+PRODUCTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/1LCyj16nsRYBk5cTpx2Sb75qmtm3YGKNEIdeyUvZzQQI/edit"
 CSV_FILE_NAME = "station_code_map.csv"
 INSPECTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/11XglLANtnG7bCxYjLRMGoZY25wspjHsGR3IG2ZyRITs/edit"
 
@@ -237,23 +237,34 @@ try:
 
     # シート保存
     if collected_data:
-        sh_prod = gc.open_by_url(PRODUCTION_SHEET_URL)
+        prod_sheet_key = PRODUCTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
+        print(f"[シート保存] 書き込み先キー: {prod_sheet_key}")
+        try:
+            sh_prod = gc.open_by_key(prod_sheet_key)
+        except Exception as e:
+            raise Exception(f"【自爆】本番シートのオープンに失敗 (key={prod_sheet_key}): {e}")
         df_output = pd.DataFrame(collected_data, columns=['city', 'station', 'plate', 'model', 'getTime', 'rsvData'])
         for area_name in df_output['city'].unique():
             df_area = df_output[df_output['city'] == area_name].copy()
             ws_name = f"{str(area_name).replace('市','').strip()}_更新用"
-            try: ws = sh_prod.worksheet(ws_name)
-            except gspread.exceptions.WorksheetNotFound: ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
+            try:
+                ws = sh_prod.worksheet(ws_name)
+            except gspread.exceptions.WorksheetNotFound:
+                try:
+                    ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
+                except Exception as e:
+                    raise Exception(f"【自爆】シート '{ws_name}' の新規作成に失敗 (編集者権限でもオーナー操作が必要な場合があります): {e}")
             ws.clear()
             ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist(), value_input_option='RAW')
+            print(f"    -> '{ws_name}' 書き込み完了 ({len(df_area)}台)")
         
         send_discord_notification(f"✅ yoyakuLong Sniper: {len(collected_data)}台の更新が完了。")
 
 except Exception as e:
     import traceback
     error_msg = f"❌ yoyakuLong重大エラー（停止）: {e}"
-    print(error_msg, flush=True)
-    print(traceback.format_exc(), flush=True)
+    print(f"\n{error_msg}")
+    print(traceback.format_exc())
     send_discord_notification(error_msg)
     sys.exit(1)
 
