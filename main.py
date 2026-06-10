@@ -100,9 +100,6 @@ if not target_vehicles:
     print("\n[通知] 巡回対象の車両がいませんでした。終了します。")
     sys.exit(0)
 
-# デバッグ用: 最初の3台のみ処理
-target_vehicles = target_vehicles[:3]
-
 print(f"-> ターゲット確定: {len(target_vehicles)} 台")
 
 # ドライバ設定
