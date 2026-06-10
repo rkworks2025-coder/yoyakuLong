@@ -125,6 +125,11 @@ try:
     if "login" in driver.current_url.lower():
         raise Exception("ログイン失敗。認証情報を確認してください。")
 
+    # 実行開始時刻を1回だけ取得して固定（ループ中に00分をまたいでもズレない）
+    now_jst = datetime.now(timezone(timedelta(hours=+9), 'JST'))
+    start_time_str = f"{now_jst.strftime('%Y-%m-%d')} {now_jst.hour:02d}:00"
+    print(f"[基準時刻] {start_time_str}")
+
     for i, target in enumerate(target_vehicles):
         target_plate = target['plate']
         station_name = target['station']
@@ -171,8 +176,6 @@ try:
                 target_box = box
                 break
         
-        now_jst = datetime.now(timezone(timedelta(hours=+9), 'JST'))
-        start_time_str = f"{now_jst.strftime('%Y-%m-%d')} {now_jst.hour:02d}:00"
 
         first_72h = []
         timetable = target_box.find("table", class_="timetable")
