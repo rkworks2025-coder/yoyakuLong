@@ -237,7 +237,7 @@ try:
 
     # シート保存
     if collected_data:
-        sh_prod = gc.open_by_url(PRODUCTION_SHEET_URL)
+        sh_prod = gc.open_by_key("1LCyj16nsRYBk5cTpx2Sb75qmtm3YGKNEIdeyUvZzQQI")
         df_output = pd.DataFrame(collected_data, columns=['city', 'station', 'plate', 'model', 'getTime', 'rsvData'])
         for area_name in df_output['city'].unique():
             df_area = df_output[df_output['city'] == area_name].copy()
