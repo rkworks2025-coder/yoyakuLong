@@ -100,6 +100,9 @@ if not target_vehicles:
     print("\n[通知] 巡回対象の車両がいませんでした。終了します。")
     sys.exit(0)
 
+# デバッグ用: 最初の3台のみ処理
+target_vehicles = target_vehicles[:3]
+
 print(f"-> ターゲット確定: {len(target_vehicles)} 台")
 
 # ドライバ設定
@@ -242,13 +245,15 @@ try:
             try: ws = sh_prod.worksheet(ws_name)
             except: ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
             ws.clear()
-            ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist())
+            ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist(), value_input_option='RAW')
         
         send_discord_notification(f"✅ yoyakuLong Sniper: {len(collected_data)}台の更新が完了。")
 
 except Exception as e:
+    import traceback
     error_msg = f"❌ yoyakuLong重大エラー（停止）: {e}"
     print(f"\n{error_msg}")
+    print(traceback.format_exc())
     send_discord_notification(error_msg)
     sys.exit(1)
 
