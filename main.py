@@ -42,7 +42,7 @@ USER_ID_2 = "REDACTED"
 PASSWORD = "REDACTED"
 
 # 2. シート設定
-PRODUCTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/1LCyj16nsRYBk5cTpx2Sb75qmtm3YGKNEIdeyUvZzQQI/edit"
+PRODUCTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/13cQngK_Xx38VU67yLS-iTHyOZgsACZdxM34l-Jq_U9A/edit"
 CSV_FILE_NAME = "station_code_map.csv"
 INSPECTION_SHEET_URL = "https://docs.google.com/spreadsheets/d/11XglLANtnG7bCxYjLRMGoZY25wspjHsGR3IG2ZyRITs/edit"
 
@@ -237,13 +237,13 @@ try:
 
     # シート保存
     if collected_data:
-        sh_prod = gc.open_by_key("1LCyj16nsRYBk5cTpx2Sb75qmtm3YGKNEIdeyUvZzQQI")
+        sh_prod = gc.open_by_url(PRODUCTION_SHEET_URL)
         df_output = pd.DataFrame(collected_data, columns=['city', 'station', 'plate', 'model', 'getTime', 'rsvData'])
         for area_name in df_output['city'].unique():
             df_area = df_output[df_output['city'] == area_name].copy()
             ws_name = f"{str(area_name).replace('市','').strip()}_更新用"
             try: ws = sh_prod.worksheet(ws_name)
-            except: ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
+            except gspread.exceptions.WorksheetNotFound: ws = sh_prod.add_worksheet(title=ws_name, rows=1000, cols=10)
             ws.clear()
             ws.update([df_area.drop(columns=['city']).columns.values.tolist()] + df_area.drop(columns=['city']).values.tolist(), value_input_option='RAW')
         
@@ -252,8 +252,8 @@ try:
 except Exception as e:
     import traceback
     error_msg = f"❌ yoyakuLong重大エラー（停止）: {e}"
-    print(f"\n{error_msg}")
-    print(traceback.format_exc())
+    print(error_msg, flush=True)
+    print(traceback.format_exc(), flush=True)
     send_discord_notification(error_msg)
     sys.exit(1)
 
