@@ -26,4 +26,5 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           echo "$GCP_SA_KEY" > service_account.json
+          python -c "import json; d=json.load(open('service_account.json')); print('SA:', d.get('client_email', 'キーが不正'))"
           python main.py
