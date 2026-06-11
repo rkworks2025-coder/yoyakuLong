@@ -185,12 +185,10 @@ try:
         # 後半と同様にフラット取得し、対象クラスのtdだけ処理する（breakなし）
         for cell in timetable.find_all("td"):
             cls = cell.get("class", [])
-            if any(x in cls for x in ["vacant", "full", "impossible", "others"]):
+            if any(x in cls for x in ["vacant", "full", "impossible", "others", "myself"]):
                 symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
                 colspan = int(cell.get("colspan", 1))
                 first_72h.extend([symbol] * colspan)
-            elif cls:
-                print(f"[未知クラス] pos={len(first_72h)} cls={cls} colspan={cell.get('colspan', 1)}")
         
         if len(first_72h) != 288:
             raise ValueError(f"【不整合】{target_plate} 前半データ不足: {len(first_72h)}/288")
