@@ -2,6 +2,15 @@ name: Manual Patrol Check
 
 on:
   workflow_dispatch:
+    inputs:
+      pw_mode:
+        description: 'TMAログインPWモード'
+        required: true
+        default: 'mode1'
+        type: choice
+        options:
+          - mode1
+          - mode2
 
 jobs:
   run-scraper:
@@ -23,6 +32,7 @@ jobs:
       - name: Run Patrol Script
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          PW_MODE: ${{ github.event.inputs.pw_mode }}
           PYTHONUNBUFFERED: "1"
         run: |
           echo "$GCP_SA_KEY" > service_account.json
