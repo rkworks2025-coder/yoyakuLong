@@ -137,6 +137,8 @@ try:
     start_time_str = f"{now_jst.strftime('%Y-%m-%d')} {now_jst.hour:02d}:00"
     print(f"[基準時刻] {start_time_str}")
 
+    absent_vehicles = []  # TMA上で見つからなかった車両（station, plate, noteの3列でTMA不在シートに書き込む）
+
     for i, target in enumerate(target_vehicles):
         target_plate = target['plate']
         station_name = target['station']
@@ -144,104 +146,113 @@ try:
         area = target['city']
 
         print(f"[{i+1}/{len(target_vehicles)}] {target_plate} ({station_name}) を狙い撃ち中...")
-        
-        base_url = f"https://dailycheck.tc-extsys.jp/tcrappsweb/web/routineStationVehicle.html?stationCd={station_cd}"
-        driver.get(base_url)
 
-        # ローディング画面の待機
         try:
+            base_url = f"https://dailycheck.tc-extsys.jp/tcrappsweb/web/routineStationVehicle.html?stationCd={station_cd}"
+            driver.get(base_url)
+
+            # ローディング画面の待機
+            try:
+                wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
+            except:
+                raise Exception(f"ローディング画面が消えません。通信環境を確認してください。")
+
+            # 車両BOXの特定（TMA上に見つからない場合はスキップ＝TMA不在として扱う）
+            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
+            car_boxes = driver.find_elements(By.CLASS_NAME, "car-list-box")
+            target_element = None
+            for box in car_boxes:
+                title_area = box.find_element(By.CLASS_NAME, "car-list-title-area").text
+                if target_plate in title_area.replace(" ", ""):
+                    target_element = box
+                    model = title_area.split(" / ")[-1].strip() if " / " in title_area else ""
+                    break
+
+            if not target_element:
+                print(f"  !! [スキップ] 車両 {target_plate} をページ内で特定できませんでした（TMA不在として記録）。")
+                absent_vehicles.append([station_name, target_plate, "※TMA未検知"])
+                continue
+
+            # 予約表の描画待機
+            try:
+                wait.until(lambda d: target_element.find_elements(By.CLASS_NAME, "timetable"))
+            except:
+                raise Exception(f"車両 {target_plate} の予約表が描画されませんでした。")
+
+            # 前半データ解析
+            soup = BeautifulSoup(driver.page_source, "lxml")
+            target_box = None
+            for box in soup.find_all("div", class_="car-list-box"):
+                raw_text = box.find("div", class_="car-list-title-area").get_text(strip=True).replace(" ", "")
+                if target_plate in raw_text:
+                    target_box = box
+                    break
+
+
+            first_72h = []
+            timetable = target_box.find("table", class_="timetable")
+            # 後半と同様にフラット取得し、対象クラスのtdだけ処理する（breakなし）
+            for cell in timetable.find_all("td"):
+                cls = cell.get("class", [])
+                if any(x in cls for x in ["vacant", "full", "impossible", "others", "myself"]):
+                    symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
+                    colspan = int(cell.get("colspan", 1))
+                    first_72h.extend([symbol] * colspan)
+
+            if len(first_72h) != 288:
+                raise ValueError(f"前半データ不足: {len(first_72h)}/288")
+
+            # --- 【後半: 72h】 (TMA2) ---
+            reserve_link = target_box.find("span", class_="link-btn").find("a")['href']
+            driver.get(f"https://dailycheck.tc-extsys.jp{reserve_link}")
+
             wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
-        except:
-            raise Exception(f"【自爆】ローディング画面が消えません。通信環境を確認してください。")
+            wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
 
-        # 車両BOXの特定
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
-        car_boxes = driver.find_elements(By.CLASS_NAME, "car-list-box")
-        target_element = None
-        for box in car_boxes:
-            title_area = box.find_element(By.CLASS_NAME, "car-list-title-area").text
-            if target_plate in title_area.replace(" ", ""):
-                target_element = box
-                model = title_area.split(" / ")[-1].strip() if " / " in title_area else ""
-                break
-        
-        if not target_element:
-            raise Exception(f"【自爆】車両 {target_plate} をページ内で特定できませんでした。")
+            target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
+            date_select_element = driver.find_element(By.ID, "reserveStartDate")
 
-        # 予約表の描画待機
-        try:
-            wait.until(lambda d: target_element.find_elements(By.CLASS_NAME, "timetable"))
-        except:
-            raise Exception(f"【自爆】車両 {target_plate} の予約表が描画されませんでした。")
+            # ★修正: プルダウン(select)要素として正確に選択する
+            try:
+                Select(date_select_element).select_by_value(target_date_val)
+            except Exception as e:
+                raise Exception(f"後半日付プルダウンの選択に失敗しました (指定値: {target_date_val}): {e}")
 
-        # 前半データ解析
-        soup = BeautifulSoup(driver.page_source, "lxml")
-        target_box = None
-        for box in soup.find_all("div", class_="car-list-box"):
-            raw_text = box.find("div", class_="car-list-title-area").get_text(strip=True).replace(" ", "")
-            if target_plate in raw_text:
-                target_box = box
-                break
-        
+            # 描画待ち (ローディング再出現に備える)
+            sleep(2)
+            wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".timetable-contents table")))
 
-        first_72h = []
-        timetable = target_box.find("table", class_="timetable")
-        # 後半と同様にフラット取得し、対象クラスのtdだけ処理する（breakなし）
-        for cell in timetable.find_all("td"):
-            cls = cell.get("class", [])
-            if any(x in cls for x in ["vacant", "full", "impossible", "others", "myself"]):
-                symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
-                colspan = int(cell.get("colspan", 1))
-                first_72h.extend([symbol] * colspan)
-        
-        if len(first_72h) != 288:
-            raise ValueError(f"【不整合】{target_plate} 前半データ不足: {len(first_72h)}/288")
+            soup_detail = BeautifulSoup(driver.page_source, "lxml")
+            timetable_detail = soup_detail.find("div", class_="timetable-contents").find("table")
+            detail_cells = timetable_detail.find_all("td")
+            second_72h = []
+            for cell in detail_cells:
+                cls = cell.get("class", [])
+                if any(x in cls for x in ["vacant", "full", "impossible", "others", "myself"]):
+                    symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
+                    colspan = int(cell.get("colspan", 1))
+                    second_72h.extend([symbol] * colspan)
 
-        # --- 【後半: 72h】 (TMA2) ---
-        reserve_link = target_box.find("span", class_="link-btn").find("a")['href']
-        driver.get(f"https://dailycheck.tc-extsys.jp{reserve_link}")
-        
-        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
-        wait.until(EC.presence_of_element_located((By.ID, "reserveStartDate")))
-        
-        target_date_val = (now_jst + timedelta(days=3)).strftime('%Y-%m-%d')
-        date_select_element = driver.find_element(By.ID, "reserveStartDate")
-        
-        # ★修正: プルダウン(select)要素として正確に選択する
-        try:
-            Select(date_select_element).select_by_value(target_date_val)
-        except Exception as e:
-            raise Exception(f"【自爆】後半日付プルダウンの選択に失敗しました (指定値: {target_date_val}): {e}")
-        
-        # 描画待ち (ローディング再出現に備える)
-        sleep(2)
-        wait.until(EC.invisibility_of_element_located((By.CLASS_NAME, "loading-view")))
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".timetable-contents table")))
+            if len(second_72h) != 288:
+                raise ValueError(f"後半データ不足: {len(second_72h)}/288")
 
-        soup_detail = BeautifulSoup(driver.page_source, "lxml")
-        timetable_detail = soup_detail.find("div", class_="timetable-contents").find("table")
-        detail_cells = timetable_detail.find_all("td")
-        second_72h = []
-        for cell in detail_cells:
-            cls = cell.get("class", [])
-            if any(x in cls for x in ["vacant", "full", "impossible", "others", "myself"]):
-                symbol = "○" if "vacant" in cls else ("s" if "impossible" in cls else "×")
-                colspan = int(cell.get("colspan", 1))
-                second_72h.extend([symbol] * colspan)
+            full_rsv = "".join(first_72h) + "".join(second_72h)
+            if len(full_rsv) != 576:
+                raise ValueError(f"最終結合データ不備: {len(full_rsv)}/576")
 
-        if len(second_72h) != 288:
-            raise ValueError(f"【不整合】{target_plate} 後半データ不足: {len(second_72h)}/288")
+            collected_data.append([area, station_name, target_plate, model, start_time_str, full_rsv])
+            print(f"    -> {target_plate} 144h取得完了")
 
-        full_rsv = "".join(first_72h) + "".join(second_72h)
-        if len(full_rsv) != 576:
-            raise ValueError(f"【不整合】最終結合データ不備: {len(full_rsv)}/576")
-
-        collected_data.append([area, station_name, target_plate, model, start_time_str, full_rsv])
-        print(f"    -> {target_plate} 144h取得完了")
+        except Exception as ex:
+            # 1台分のエラーは全体を止めず、ログだけ出してスキップして次の車両へ進む（yoyaku側と同じ挙動）
+            print(f"  !! [スキップ] 車両解析エラー [{station_name} / {target_plate}]: {ex}")
+            continue
 
     # シート保存
+    prod_sheet_key = PRODUCTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
+
     if collected_data:
-        prod_sheet_key = PRODUCTION_SHEET_URL.split('/d/')[1].split('/edit')[0]
         print(f"[シート保存] 書き込み先キー: {prod_sheet_key}")
         try:
             sh_prod = gc.open_by_key(prod_sheet_key)
@@ -263,6 +274,20 @@ try:
             print(f"    -> '{ws_name}' 書き込み完了 ({len(df_area)}台)")
         
         send_discord_notification(f"✅ yoyakuLong Sniper: {len(collected_data)}台の更新が完了。")
+
+    # TMA不在シートへの書き込み（yoyakuと同じ予約管理メインSS内の「TMA不在」シートに上書き）
+    if absent_vehicles:
+        try:
+            sh_prod_absence = gc.open_by_key(prod_sheet_key)
+            absence_sheet = sh_prod_absence.worksheet("TMA不在")
+            absence_sheet.clear()
+            absence_sheet.update([['station', 'plate', 'note']] + absent_vehicles, value_input_option='RAW')
+            print(f"[TMA不在] {len(absent_vehicles)}台を記録しました。")
+        except Exception as e:
+            print(f"  !! [警告] TMA不在シートへの書き込みに失敗しました: {e}")
+            send_discord_notification(f"⚠️ yoyakuLong: TMA不在シートへの書き込みに失敗しました:\n```{e}```")
+
+
 
 except Exception as e:
     import traceback
