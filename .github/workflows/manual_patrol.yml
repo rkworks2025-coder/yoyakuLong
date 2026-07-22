@@ -13,9 +13,9 @@ on:
           - mode2
 
 jobs:
-  run-scraper:
+  scrape:
     runs-on: ubuntu-latest
- 
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,10 +29,49 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run Patrol Script
+      - name: Run Scrape Stage
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           PW_MODE: ${{ github.event.inputs.pw_mode }}
+          STAGE: scrape
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "$GCP_SA_KEY" > service_account.json
+          python main.py
+
+      - name: Upload collected data
+        uses: actions/upload-artifact@v4
+        with:
+          name: collected-data
+          path: collected_data.json
+          retention-days: 1
+
+  write:
+    needs: scrape
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Download collected data
+        uses: actions/download-artifact@v4
+        with:
+          name: collected-data
+
+      - name: Run Write Stage
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          STAGE: write
           PYTHONUNBUFFERED: "1"
         run: |
           echo "$GCP_SA_KEY" > service_account.json
