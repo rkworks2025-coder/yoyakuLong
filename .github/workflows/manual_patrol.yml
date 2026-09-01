@@ -32,6 +32,7 @@ jobs:
       - name: Run Scrape Stage
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PW_MODE: ${{ github.event.inputs.pw_mode }}
           STAGE: scrape
           PYTHONUNBUFFERED: "1"
@@ -71,6 +72,7 @@ jobs:
       - name: Run Write Stage
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STAGE: write
           PYTHONUNBUFFERED: "1"
         run: |
