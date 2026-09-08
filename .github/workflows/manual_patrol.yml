@@ -34,6 +34,10 @@ jobs:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PW_MODE: ${{ github.event.inputs.pw_mode }}
+          TMA_ID_1: ${{ secrets.TMA_ID_1 }}
+          TMA_ID_2: ${{ secrets.TMA_ID_2 }}
+          TMA_PW_MODE1: ${{ secrets.TMA_PW_MODE1 }}
+          TMA_PW_MODE2: ${{ secrets.TMA_PW_MODE2 }}
           STAGE: scrape
           PYTHONUNBUFFERED: "1"
         run: |

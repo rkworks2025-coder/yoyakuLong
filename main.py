@@ -55,15 +55,15 @@ def send_discord_notification(message):
 
 # 1. ログイン情報
 LOGIN_URL = "https://dailycheck.tc-extsys.jp/tcrappsweb/web/login/tawLogin.html"
-USER_ID_1 = "0030"
-USER_ID_2 = "REDACTED"
+USER_ID_1 = os.environ.get("TMA_ID_1", "0030")
+USER_ID_2 = os.environ.get("TMA_ID_2", "")
 # PW_MODE環境変数（mode1/mode2）に応じてPWを切り替える（ポータルのPWモード切替と連携）
 PW_MODE = os.environ.get('PW_MODE', 'mode1').lower()
 PASSWORD_MAP = {
-    "mode1": "REDACTED",
-    "mode2": "REDACTED"
+    "mode1": os.environ.get("TMA_PW_MODE1", ""),
+    "mode2": os.environ.get("TMA_PW_MODE2", "")
 }
-PASSWORD = PASSWORD_MAP.get(PW_MODE, "REDACTED")
+PASSWORD = PASSWORD_MAP.get(PW_MODE, os.environ.get("TMA_PW_MODE1", ""))
 print(f"[PWモード] {PW_MODE} を使用")
 
 # 2. シート設定
