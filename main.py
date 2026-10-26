@@ -107,6 +107,8 @@ ABSENT_CONFIRM_ATTEMPTS = 2  # 「TMA不在」を確定するまでの確認回�
 RETRY_BASE_WAIT = 3          # 再試行前の待機(秒)。試行ごとに倍（★高速化D: 5→3）
 SECOND_PASS_WAIT = 15        # 失敗分をもう1周する前の待機(秒)（★高速化D: 30→15）
 DATE_SWITCH_WAIT = 2         # ★高速化C: 日付切替の検知を待つ上限(秒)（従来の固定sleep(2)と同じ）
+TIMETABLE_WAIT_TIMEOUT = 90  # 車両BOX出現後、前半の予約表が描画されるまでの上限(秒)
+                             # ★描画が遅い車両はリロードせず同じページのまま待つ（リロードすると描画が最初からやり直しになるため）
 
 # 3. Google認証
 SERVICE_ACCOUNT_KEY_FILE = "service_account.json"
@@ -347,7 +349,9 @@ if NEEDS_SCRAPE:
     # ==========================================================
     # ★高速化A: ステーションページを1回開き、対象車両の前半72hをまとめて読む
     # 戻り値: (ok={index: info}, absent=[index], failed={index: エラー})
-    # - 描画不足の車両だけを対象に再試行（最大VEHICLE_MAX_ATTEMPTS回）
+    # - ページ読込の失敗（ローディング・セッション切れ等）は再試行（最大VEHICLE_MAX_ATTEMPTS回）
+    # - ★予約表の描画が遅い車両はリロードせず同じページで最大TIMETABLE_WAIT_TIMEOUT秒待ち、
+    #   それでも揃わなければリロードによる再試行はせず失敗扱い（最後の再巡回で再取得）
     # - ページ内に見つからない車両はABSENT_CONFIRM_ATTEMPTS回確認してからTMA不在として確定
     # ==========================================================
     def load_station(state, station_cd, idx_list):
@@ -355,6 +359,7 @@ if NEEDS_SCRAPE:
         ok = {}
         absent_seen = {}
         vehicle_err = {}
+        render_failed = []  # ★描画待ちしても予約表が揃わなかった車両（再巡回へ回す）
         last_err = None
 
         for attempt in range(1, VEHICLE_MAX_ATTEMPTS + 1):
@@ -379,7 +384,7 @@ if NEEDS_SCRAPE:
                 # ★予約表の描画待ち（車両BOXの出現後に予約表が遅れて描画されるため）
                 # 未確定の対象車両すべてについて前半72hが読み取れる状態になるまで待つ
                 # （ページ内に無い車両はNoneが返るので待ち対象外）
-                # 時間内に揃わなければ揃った分だけで判定し、残りは再試行に回す
+                # 時間内に揃わなければ揃った分だけで判定し、残りは最後の再巡回に回す（リロードしない）
                 def targets_ready(x):
                     s = BeautifulSoup(x.page_source, "lxml")
                     for i in pending:
@@ -389,8 +394,9 @@ if NEEDS_SCRAPE:
                             return False
                     return ("ready", s)
                 try:
-                    _, soup = WebDriverWait(d, ELEMENT_WAIT_TIMEOUT, poll_frequency=0.5).until(targets_ready)
+                    _, soup = WebDriverWait(d, TIMETABLE_WAIT_TIMEOUT, poll_frequency=0.5).until(targets_ready)
                 except TimeoutException:
+                    print(f"   !! 予約表が{TIMETABLE_WAIT_TIMEOUT}秒待っても揃いませんでした（描画済みの車両のみ採用）")
                     soup = BeautifulSoup(d.page_source, "lxml")
 
                 # 前半データ解析（対象車両をまとめて）
@@ -400,8 +406,9 @@ if NEEDS_SCRAPE:
                     try:
                         info = parse_first_half(soup, target_plate)
                     except Exception as e:
+                        # ★描画待ち済みのためリロードでの再試行はしない（render_failedとして確定）
                         vehicle_err[i] = e
-                        next_pending.append(i)
+                        render_failed.append(i)
                         continue
                     if info is None:
                         # 車両BOXの特定（TMA上に見つからない場合は確認回数に達したらTMA不在として扱う）
@@ -428,6 +435,9 @@ if NEEDS_SCRAPE:
 
         absent = [i for i in idx_list if i not in ok and absent_seen.get(i, 0) >= ABSENT_CONFIRM_ATTEMPTS]
         failed = {i: vehicle_err.get(i, last_err) for i in pending if i not in absent}
+        for i in render_failed:
+            if i not in ok:
+                failed[i] = vehicle_err.get(i, last_err)
         return ok, absent, failed
 
     # ==========================================================
