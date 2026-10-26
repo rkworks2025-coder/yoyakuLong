@@ -376,8 +376,24 @@ if NEEDS_SCRAPE:
                 # 車両BOXの出現待ち
                 wait.until(EC.presence_of_element_located((By.CLASS_NAME, "car-list-box")))
 
+                # ★予約表の描画待ち（車両BOXの出現後に予約表が遅れて描画されるため）
+                # 未確定の対象車両すべてについて前半72hが読み取れる状態になるまで待つ
+                # （ページ内に無い車両はNoneが返るので待ち対象外）
+                # 時間内に揃わなければ揃った分だけで判定し、残りは再試行に回す
+                def targets_ready(x):
+                    s = BeautifulSoup(x.page_source, "lxml")
+                    for i in pending:
+                        try:
+                            parse_first_half(s, target_vehicles[i]['plate'])
+                        except Exception:
+                            return False
+                    return ("ready", s)
+                try:
+                    _, soup = WebDriverWait(d, ELEMENT_WAIT_TIMEOUT, poll_frequency=0.5).until(targets_ready)
+                except TimeoutException:
+                    soup = BeautifulSoup(d.page_source, "lxml")
+
                 # 前半データ解析（対象車両をまとめて）
-                soup = BeautifulSoup(d.page_source, "lxml")
                 next_pending = []
                 for i in pending:
                     target_plate = target_vehicles[i]['plate']
