@@ -106,6 +106,8 @@ VEHICLE_MAX_ATTEMPTS = 3     # ステーションページ・後半予約ペー�
 ABSENT_CONFIRM_ATTEMPTS = 2  # 「TMA不在」を確定するまでの確認回数
 RETRY_BASE_WAIT = 3          # 再試行前の待機(秒)。試行ごとに倍（★高速化D: 5→3）
 SECOND_PASS_WAIT = 15        # 失敗分をもう1周する前の待機(秒)（★高速化D: 30→15）
+RETRY_ROUNDS_MAX = 5         # ★再巡回の最大周回数（全部取れるまで繰り返すが、永久に止まらないよう上限を設ける）
+RETRY_TIME_BUDGET = 30 * 60  # ★再巡回の合計時間の上限(秒)。超えたら取れた分だけで書き込みへ進む
 DATE_SWITCH_WAIT = 2         # ★高速化C: 日付切替の検知を待つ上限(秒)（従来の固定sleep(2)と同じ）
 TIMETABLE_WAIT_TIMEOUT = 90  # 車両BOX出現後、前半の予約表が描画されるまでの上限(秒)
                              # ★描画が遅い車両はリロードせず同じページのまま待つ（リロードすると描画が最初からやり直しになるため）
@@ -550,10 +552,16 @@ if NEEDS_SCRAPE:
         # 指定した車両群をステーション単位で処理し、取得できなかった車両のindexを返す
         # 1台分のエラーは全体を止めず、ログだけ出して次へ進む
         # ==========================================================
-        def process(indexes, label):
+        def process(indexes, label, deadline=None):
             failed_here = []
             groups = group_by_station(indexes)
             for g_no, (station_cd, idx_list) in enumerate(groups):
+                # ★再巡回の時間上限を超えたら、残りは取得せず失敗扱いで返す
+                if deadline is not None and datetime.now().timestamp() > deadline:
+                    print(f"   !! 再巡回が合計{RETRY_TIME_BUDGET // 60}分を超えたため、残りは打ち切ります。")
+                    for _, rest in groups[g_no:]:
+                        failed_here.extend(rest)
+                    break
                 station_name = target_vehicles[idx_list[0]]['station']
                 prefix = f"{label} " if label else ""
                 print(f"[{prefix}{g_no+1}/{len(groups)}] {station_name} ({len(idx_list)}台) を狙い撃ち中...")
@@ -586,11 +594,19 @@ if NEEDS_SCRAPE:
 
         failed_indexes = process(list(range(len(target_vehicles))), "")
 
-        # ★失敗分をまとめてもう1周（サーバーが一時的に重かった分の回収）
-        if failed_indexes:
-            print(f"\n[再巡回] 取得失敗 {len(failed_indexes)}台を{SECOND_PASS_WAIT}秒後に再取得します...")
+        # ★失敗分の再巡回（サーバーが一時的に重かった分の回収）
+        # 全部取れるまで周回を繰り返すが、RETRY_ROUNDS_MAX周 または RETRY_TIME_BUDGET秒 で打ち切り、
+        # 取れた分だけで書き込みへ進む（1台のために全体が永久に止まり、何も書き込まれない事態を防ぐ）
+        retry_deadline = datetime.now().timestamp() + RETRY_TIME_BUDGET
+        for round_no in range(1, RETRY_ROUNDS_MAX + 1):
+            if not failed_indexes:
+                break
+            if datetime.now().timestamp() > retry_deadline:
+                print(f"\n[再巡回] 合計{RETRY_TIME_BUDGET // 60}分を超えたため打ち切ります。")
+                break
+            print(f"\n[再巡回 {round_no}周目/{RETRY_ROUNDS_MAX}] 取得失敗 {len(failed_indexes)}台を{SECOND_PASS_WAIT}秒後に再取得します...")
             sleep(SECOND_PASS_WAIT)
-            failed_indexes = process(sorted(failed_indexes), "再巡回")
+            failed_indexes = process(sorted(failed_indexes), f"再巡回{round_no}", deadline=retry_deadline)
 
         # 元の順番で組み立て
         for i in sorted(rows_by_index.keys()):
